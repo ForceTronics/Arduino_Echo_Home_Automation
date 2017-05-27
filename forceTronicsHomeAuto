@@ -1,4 +1,5 @@
-var https = require('https') //include https
+var https = require('https'); //include https
+var http = require('http');
 
 exports.handler = (event, context) => {
 
@@ -6,7 +7,7 @@ exports.handler = (event, context) => {
 
     if (event.session.new) {
       // New Session
-      console.log("NEW SESSION") //log this for debugging
+      console.log("NEW SESSION"); //log this for debugging
     }
 
     switch (event.request.type) {
@@ -27,8 +28,8 @@ exports.handler = (event, context) => {
         console.log(`INTENT REQUEST`)
 
         switch(event.request.intent.name) { //switch statement to select the right intent
-          case "TurnLightOn":
-          var endpoint = "https://data.sparkfun.com/input/YourPublicKey?private_key=YourPrivateKey&lightstate=1" //https string to log data to phant phant
+          case "TurnLightOn": //if you told alexa to turn the light on this will be true
+          var endpoint = "https://data.sparkfun.com/input/1nlZrX0NbdfwxgrY0zA0?private_key=0mDlvAkdoRIq976eakpa&lightstate=1" //https string to log data to phant phant
           https.get(endpoint, function (result) { //use https get request to send data to phant
           console.log('Success, with: ' + result.statusCode);
           context.succeed(
@@ -44,7 +45,7 @@ exports.handler = (event, context) => {
             break;
 
           case "TurnLightOff": //the turn light off intent
-            var endpoint2 = "https://data.sparkfun.com/input/YourPublicKey?private_key=YourPrivateKey&lightstate=0" // phant string to set light state to off
+            var endpoint2 = "https://data.sparkfun.com/input/1nlZrX0NbdfwxgrY0zA0?private_key=0mDlvAkdoRIq976eakpa&lightstate=0"; // phant string to set light state to off
             https.get(endpoint2, function (result) {
             console.log('Success, with: ' + result.statusCode);
             context.succeed(
@@ -52,22 +53,75 @@ exports.handler = (event, context) => {
                  buildSpeechletResponse("The light is turned off", true),
                     {}
                 )
-            )
+            );
             }).on('error', function (err) {
             console.log('Error, with: ' + err.message);
             context.done("Failed");
             });
             break;
 
+        case "IsWasherRunning": //check the state of the washer
+            var endpoint3 = "http://data.sparkfun.com/output/pw8EWVl18zUgW9OYzJNv.csv?page=1"; // phant csv file page
+
+            http.get(endpoint3, function (response) { //http get request, data is returned to response
+                response.setEncoding('utf8');
+                response.on('data', function (body) { //now let's go through response data from phant cloud
+                    //following variables are getting hour and date info to ensure data is new and not old
+                    var lHour = Date().substr(16,2); //hour from amazon server
+                    var dHour = body.substr(35,2); //hour from phant cloud data
+                    var lDate = Date().substr(8,2);
+                    var dDate = body.substr(32,2);
+
+                    if(checkTime(lHour, dHour, lDate, dDate)===1) { //if this is true data from phant is fresh
+                        var s = body.substr(22,1); //read washer state data from phant string
+                        if (s=='1') { //if it is 1 then washer is on
+                            context.succeed(
+                                generateResponse( //if you succeeded allow Alexa to tell you state of light
+                                    buildSpeechletResponse("The washer is running", true),
+                                    {}
+                                )
+                            );
+                        }
+                        else if (s=='0') { //if it is 0 then washer is off
+                            context.succeed(
+                            generateResponse( //if you succeeded allow Alexa to tell you state of light
+                                buildSpeechletResponse("The washer is off", true),
+                                    {}
+                                )
+                            );
+                        }
+                        else { //if this is true then there is an issue getting data from phant
+                            context.succeed(
+                            generateResponse( //if you succeeded allow Alexa to tell you state of light
+                                buildSpeechletResponse("There was an error checking washer state", true),
+                                    {}
+                                )
+                            );
+                        }
+                    }
+                    else { //if this is true the data is old and there maybe something wrong with the hardware
+                        console.log("didn't pass date and time test");
+                        context.succeed(
+                        generateResponse( //if you succeeded allow Alexa to tell you state of light
+                                buildSpeechletResponse("No recent washer state data available", true),
+                                    {}
+                            )
+                        );
+                    }
+                });
+                response.on('error', console.error);
+            });
+            break;
+
           default:
-            throw "Invalid intent"
+            throw "Invalid intent";
         }
 
         break;
 
       case "SessionEndedRequest":
         // Session Ended Request
-        console.log(`SESSION ENDED REQUEST`)
+        console.log(`SESSION ENDED REQUEST`);
         break;
 
       default:
@@ -90,7 +144,7 @@ buildSpeechletResponse = (outputText, shouldEndSession) => {
     shouldEndSession: shouldEndSession
   }
 
-}
+};
 
 //plays Alexa reponse
 generateResponse = (speechletResponse, sessionAttributes) => {
@@ -101,4 +155,24 @@ generateResponse = (speechletResponse, sessionAttributes) => {
     response: speechletResponse
   }
 
+};
+
+//this function checks to see if data from phant cloud is relitively new
+function checkTime(lTime, dTime, lDay, dDay) {
+    //turn hour and date strings into ints
+     var lT = parseInt(lTime);
+     var dT = parseInt(dTime);
+     var lD = parseInt(lDay);
+     var dD = parseInt(dDay);
+
+     if(lD===dD && lT===dT) { //if it is same day and hour then data is good
+         return 1;
+     }
+     else if(lD===dD && (lT - 1)===dT) { //if day is the same and hour is only off by one then data is good
+         return 1;
+     }
+     else if((lD - 1)===dD && lT===0 && dT===23) { //if date is one off but time is around midnight then data is good
+         return 1;
+     }
+     else return 0; //if none of the above if statements are true then data is old
 }
